@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Yale Purity Test - Quiz</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>Yale Purity Test</h1>
+    <form id="quiz-form">
+        <h2>Demographics</h2>
+        <label for="year">Year:</label>
+        <input type="text" id="year" name="year" required><br><br>
+        
+        <label for="college">College:</label>
+        <input type="text" id="college" name="college"><br><br>
+
+        <label for="gender">Gender:</label>
+        <input type="text" id="gender" name="gender"><br><br>
+
+        <label for="social_club">Social Club:</label>
+        <input type="text" id="social_club" name="social_club"><br><br>
+
+        <h2>Quiz Questions (Example - 10 questions)</h2>
+        <div id="questions">
+            <!-- Questions will be loaded here by JavaScript -->
+        </div>
+
+        <button type="submit">Submit Quiz</button>
+    </form>
+
+    <script src="script.js"></script>
+</body>
+</html> 

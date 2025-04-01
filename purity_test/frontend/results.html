@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Yale Purity Test - Results</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> <!-- Include Chart.js -->
+</head>
+<body>
+    <h1>Your Results</h1>
+    <p>Submission ID: <span id="submission-id"></span></p>
+    <p>Your Score: <span id="score"></span></p>
+    <p>Percentile: <span id="percentile"></span>%</p>
+
+    <h2>Score Distribution</h2>
+    <canvas id="scoreChart" width="400" height="200"></canvas>
+
+    <h2>Question Statistics</h2>
+    <ul id="question-stats">
+        <!-- Stats will be loaded here -->
+    </ul>
+
+    <script src="script.js"></script>
+</body>
+</html> 

@@ -1,0 +1,221 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  Yale Purity Test Backend
+  Serverless backend and frontend for the Yale Purity Test application
+
+Parameters:
+  FrontendDomainName:
+    Type: String
+    Description: (Optional) The custom domain name for the CloudFront distribution (e.g., purity.yale.edu)
+    Default: ""
+  FrontendCertificateArn:
+    Type: String
+    Description: (Optional) The ARN of the ACM certificate for the custom domain (must be in us-east-1)
+    Default: ""
+
+Conditions:
+  HasDomainName: !Not [!Equals [!Ref FrontendDomainName, ""]]
+  HasCertificateArn: !Not [!Equals [!Ref FrontendCertificateArn, ""]]
+  UseCustomDomain: !And [Condition: HasDomainName, Condition: HasCertificateArn]
+
+Resources:
+  # DynamoDB Table for storing quiz results
+  PurityTestTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: YalePurityTest
+      BillingMode: PAY_PER_REQUEST  # On-demand capacity mode for cost optimization
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true  # Enable server-side encryption
+
+  # Lambda function for submitting quiz results
+  SubmitQuizFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: app.submit_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      MemorySize: 128
+      Timeout: 10
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref PurityTestTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PurityTestTable
+      Events:
+        SubmitQuizApi:
+          Type: Api
+          Properties:
+            Path: /submit
+            Method: post
+            RestApiId: !Ref PurityTestApi
+
+  # Lambda function for getting statistics
+  GetStatsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: api/
+      Handler: app.stats_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      MemorySize: 128
+      Timeout: 15  # Give more time for stats calculation
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref PurityTestTable
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref PurityTestTable
+      Events:
+        GetStatsApi:
+          Type: Api
+          Properties:
+            Path: /stats/{submission_id}
+            Method: get
+            RestApiId: !Ref PurityTestApi
+
+  # API Gateway for REST API
+  PurityTestApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Cors:
+        AllowMethods: "'*'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,Origin,Accept'"
+        AllowOrigin: "'*'"  # Allow any origin and handle CORS in Lambda
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,Origin,Accept'"
+              Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+        DEFAULT_5XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,Origin,Accept'"
+              Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+
+  # S3 Bucket for Frontend Static Website
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html # Redirect errors to index
+      BucketName: !Sub "yale-purity-test-frontend-${AWS::AccountId}" # Globally unique bucket name
+
+  # S3 Bucket Policy to allow CloudFront access
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipal
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${FrontendBucket}/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}"
+
+  # CloudFront Origin Access Control (OAC)
+  CloudFrontOAC:
+      Type: AWS::CloudFront::OriginAccessControl
+      Properties:
+          OriginAccessControlConfig: 
+              Name: !Sub "${FrontendBucket}-OAC"
+              OriginAccessControlOriginType: s3
+              SigningBehavior: always
+              SigningProtocol: sigv4
+
+  # CloudFront Distribution to serve the static website
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Origins:
+          - DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            Id: S3Origin
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+            OriginAccessControlId: !GetAtt CloudFrontOAC.Id # Use OAC
+        Enabled: true
+        DefaultRootObject: index.html
+        # Custom Domain Configuration (Optional)
+        Aliases: !If [UseCustomDomain, [!Ref FrontendDomainName], !Ref "AWS::NoValue"]
+        ViewerCertificate: !If 
+          - UseCustomDomain
+          - 
+            AcmCertificateArn: !Ref FrontendCertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2019
+          - 
+            CloudFrontDefaultCertificate: true
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+        PriceClass: PriceClass_100 # Use only North America and Europe edge locations for cost optimization
+
+Outputs:
+  PurityTestTable:
+    Description: "DynamoDB table for Yale Purity Test"
+    Value: !Ref PurityTestTable
+  
+  SubmitQuizFunction:
+    Description: "Lambda Function ARN for submitting quiz results"
+    Value: !GetAtt SubmitQuizFunction.Arn
+  
+  GetStatsFunction:
+    Description: "Lambda Function ARN for retrieving statistics"
+    Value: !GetAtt GetStatsFunction.Arn
+  
+  ApiEndpoint:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${PurityTestApi}.execute-api.${AWS::Region}.amazonaws.com/prod/"
+
+  FrontendBucketName:
+    Description: "S3 bucket name for the frontend website"
+    Value: !Ref FrontendBucket
+
+  CloudFrontDistributionId:
+    Description: "CloudFront distribution ID for the frontend"
+    Value: !Ref FrontendDistribution
+
+  CloudFrontDomainName:
+    Description: "CloudFront domain name for the frontend"
+    Value: !GetAtt FrontendDistribution.DomainName
+
+  WebsiteURL:
+    Description: "URL for the hosted website"
+    Value: !If [UseCustomDomain, !Sub "https://${FrontendDomainName}", !Sub "https://${FrontendDistribution.DomainName}"] 
